@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>立体四目並べ：Block Overlap 3D</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a1a1a;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none; /* スマホでのスクロール防止 */
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+        #ui-layer {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            pointer-events: none; /* 下のキャンバスの操作を邪魔しない */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-bottom: 20px;
+        }
+        .panel {
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 12px;
+            pointer-events: auto; /* パネル自体は操作可能 */
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            text-align: center;
+            border: 1px solid #444;
+            max-width: 90%;
+        }
+        .info-row {
+            font-size: 1.2rem;
+            margin-bottom: 15px;
+            font-weight: bold;
+        }
+        #turn-indicator {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            margin-right: 8px;
+            vertical-align: middle;
+            border: 2px solid #888;
+        }
+        .controls-grid {
+            display: grid;
+            grid-template-columns: 50px 50px 50px;
+            grid-template-rows: 50px 50px;
+            gap: 8px;
+            justify-content: center;
+            margin-bottom: 15px;
+        }
+        .btn {
+            background: #333;
+            color: white;
+            border: 1px solid #666;
+            border-radius: 8px;
+            font-size: 1.2rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            transition: background 0.2s;
+        }
+        .btn:active { background: #555; }
+        .btn-up { grid-column: 2; grid-row: 1; }
+        .btn-left { grid-column: 1; grid-row: 2; }
+        .btn-down { grid-column: 2; grid-row: 2; }
+        .btn-right { grid-column: 3; grid-row: 2; }
+        
+        .action-row {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+        .btn-action {
+            padding: 10px 15px;
+            font-size: 1rem;
+            border-radius: 8px;
+            background: #2b5c8f;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        .btn-place {
+            background: #e67e22;
+            font-weight: bold;
+        }
+        .btn-action:disabled {
+            background: #555;
+            color: #888;
+            cursor: not-allowed;
+        }
+        #message-overlay {
+            position: absolute;
+            top: 30%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            display: none;
+            border: 2px solid #fff;
+            z-index: 10;
+        }
+        #message-text {
+            font-size: 2rem;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+        #top-view-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 8px;
+            padding: 10px;
+            border: 1px solid #555;
+        }
+        .top-view-title { font-size: 0.8rem; margin-bottom: 5px; text-align: center; color: #ccc;}
+        .top-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 20px);
+            grid-template-rows: repeat(4, 20px);
+            gap: 2px;
+            background: #333;
+            padding: 2px;
+        }
+        .top-cell {
+            width: 20px;
+            height: 20px;
+            background: #111;
+            border-radius: 2px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .top-dot {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+        }
+        .help-text {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: #aaa;
+            font-size: 0.8rem;
+            pointer-events: none;
+            text-align: right;
+        }
+    </style>
+    <!-- Three.js と OrbitControls の読み込み -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div id="canvas-container"></div>
+    
+    <div id="top-view-panel">
+        <div class="top-view-title">上空ビュー</div>
+        <div class="top-grid" id="top-grid">
+            <!-- JSで生成 -->
+        </div>
+    </div>
+
+    <div class="help-text">
+        視点移動: マウスドラッグ / スワイプ<br>
+        ズーム: マウスホイール / ピンチ
+    </div>
+
+    <div id="ui-layer">
+        <div class="panel">
+            <div class="info-row">
+                <span id="turn-indicator" style="background-color: white;"></span>
+                <span id="turn-text">白のターン</span>
+            </div>
+            
+            <div class="controls-grid">
+                <button class="btn btn-up" id="btn-y-minus">↑</button>
+                <button class="btn btn-left" id="btn-x-minus">←</button>
+                <button class="btn btn-down" id="btn-y-plus">↓</button>
+                <button class="btn btn-right" id="btn-x-plus">→</button>
+            </div>
+            
+            <div class="action-row">
+                <button class="btn-action" id="btn-rotate">🔁 回転</button>
+                <button class="btn-action" id="btn-flip">↔ 球入替</button>
+                <button class="btn-action btn-place" id="btn-place">配置する</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="message-overlay">
+        <div id="message-text">白の勝ち！</div>
+        <button class="btn-action" onclick="location.reload()">もう一度遊ぶ</button>
+    </div>
+
+    <script>
+        // --- ゲームのロジック ---
+        const SIZE = 4;
+        
+        class GameBoard {
+            constructor() {
+                // 3次元配列 [x][y][z]
+                this.grid = Array.from({length: SIZE}, () => 
+                    Array.from({length: SIZE}, () => 
+                        Array.from({length: SIZE}, () => null)
+                    )
+                );
+                this.blockCounter = 0;
+            }
+
+            // 指定された x, y の現在の高さを取得 (ブロックがなければ -1)
+            getTopZ(x, y) {
+                for (let z = SIZE - 1; z >= 0; z--) {
+                    if (this.grid[x][y][z] !== null) return z;
+                }
+                return -1;
+            }
+
+            // ブロックを配置できるZ高さを計算する。配置不可なら -1 を返す
+            // dir: 0(X軸平行), 1(Y軸平行)
+            getPlacementZ(x, y, dir) {
+                let x1 = x, y1 = y;
+                let x2 = x + (dir === 0 ? 1 : 0);
+                let y2 = y + (dir === 1 ? 1 : 0);
+
+                // 盤面外チェック
+                if (x2 >= SIZE || y2 >= SIZE) return -1;
+                if (x1 < 0 || y1 < 0) return -1;
+
+                let z1 = this.getTopZ(x1, y1);
+                let z2 = this.getTopZ(x2, y2);
+
+                // 高さが違う場合は空中に浮く部分ができるので配置不可
+                if (z1 !== z2) return -1;
+
+                let targetZ = z1 + 1;
+                
+                // 高さ上限チェック
+                if (targetZ >= SIZE) return -1;
+
+                // 直下ブロックの完全重なりチェック（ジェンガルール）
+                if (targetZ > 0) {
+                    let b1 = this.grid[x1][y1][targetZ - 1];
+                    let b2 = this.grid[x2][y2][targetZ - 1];
+                    if (b1 !== null && b2 !== null && b1.blockId === b2.blockId) {
+                        return -1; // 全く同じブロックの上に平行に乗っている
+                    }
+                }
+
+                return targetZ;
+            }
+
+            // ブロックを配置する
+            // spherePos: 0なら(x1,y1)が球、1なら(x2,y2)が球
+            placeBlock(x, y, z, dir, color, spherePos) {
+                this.blockCounter++;
+                let id = this.blockCounter;
+
+                let x1 = x, y1 = y;
+                let x2 = x + (dir === 0 ? 1 : 0);
+                let y2 = y + (dir === 1 ? 1 : 0);
+
+                this.grid[x1][y1][z] = {
+                    id: id,
+                    type: spherePos === 0 ? 'sphere' : 'empty',
+                    color: spherePos === 0 ? color : null
+                };
+                this.grid[x2][y2][z] = {
+                    id: id,
+                    type: spherePos === 1 ? 'sphere' : 'empty',
+                    color: spherePos === 1 ? color : null
+                };
+            }
+
+            // 上から見た時の色配列を取得 (4x4)
+            getTopView() {
+                let view = Array.from({length: SIZE}, () => Array(SIZE).fill(null));
+                for (let x = 0; x < SIZE; x++) {
+                    for (let y = 0; y < SIZE; y++) {
+                        // 上から下へ走査し、最初に見つかった「球」の色を取得
+                        for (let z = SIZE - 1; z >= 0; z--) {
+                            let cell = this.grid[x][y][z];
+                            if (cell !== null && cell.type === 'sphere') {
+                                view[x][y] = cell.color;
+                                break;
+                            }
+                        }
+                    }
+                }
+                return view;
+            }
+
+            // 勝利判定
+            checkWin() {
+                let view = this.getTopView();
+                
+                const checkLine = (c1, c2, c3, c4) => {
+                    return (c1 !== null && c1 === c2 && c1 === c3 && c1 === c4) ? c1 : null;
+                };
+
+                // 横
+                for (let y = 0; y < SIZE; y++) {
+                    let win = checkLine(view[0][y], view[1][y], view[2][y], view[3][y]);
+                    if (win) return win;
+                }
+                // 縦
+                for (let x = 0; x < SIZE; x++) {
+                    let win = checkLine(view[x][0], view[x][1], view[x][2], view[x][3]);
+                    if (win) return win;
+                }
+                // 斜め
+                let winDiag1 = checkLine(view[0][0], view[1][1], view[2][2], view[3][3]);
+                if (winDiag1) return winDiag1;
+                let winDiag2 = checkLine(view[3][0], view[2][1], view[1][2], view[0][3]);
+                if (winDiag2) return winDiag2;
+
+                return null;
+            }
+        }
+
+        // --- Three.js 描画のセットアップ ---
+        let scene, camera, renderer, controls;
+        let boardGroup;
+        let ghostBlock; // 配置プレビュー用
+        let placedMeshes = [];
+
+        // ゲーム状態
+        let gameBoard = new GameBoard();
+        let currentTurn = 'white'; // 'white' or 'black'
+        let cursorX = 1, cursorY = 1;
+        let currentDir = 0; // 0: X軸(右へ伸びる), 1: Y軸(奥へ伸びる)
+        let currentSpherePos = 0; // 0: 基点側, 1: 伸びた側
+        let isGameOver = false;
+
+        // マテリアル定義
+        const matWhite = new THREE.MeshPhongMaterial({ color: 0xffffff });
+        const matBlack = new THREE.MeshPhongMaterial({ color: 0x222222 });
+        const matEmpty = new THREE.MeshPhysicalMaterial({ 
+            color: 0x88aaee, 
+            transparent: true, 
+            opacity: 0.1,
+            roughness: 0.1,
+            transmission: 0.9,
+            thickness: 0.5
+        });
+        const matGhostValid = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.4 });
+        const matGhostInvalid = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.4 });
+        
+        // エッジ描画用マテリアル
+        const lineMat = new THREE.LineBasicMaterial({ color: 0x555555 });
+
+        init();
+        animate();
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a1a);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(5, 6, 8);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.target.set(SIZE/2, SIZE/2 - 1, SIZE/2); // 盤面中心を注視
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.maxPolarAngle = Math.PI / 2 + 0.1; // 地下に入りすぎないように
+
+            // ライト
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+            dirLight.position.set(5, 10, 5);
+            scene.add(dirLight);
+
+            // 盤面グループ作成
+            boardGroup = new THREE.Group();
+            scene.add(boardGroup);
+
+            // 盤面のグリッド作成 (Y=0を底とする)
+            const gridHelper = new THREE.GridHelper(SIZE, SIZE, 0x888888, 0x444444);
+            gridHelper.position.set(SIZE/2, 0, SIZE/2);
+            boardGroup.add(gridHelper);
+
+            // プレビュー用ブロックの初期化
+            ghostBlock = createBlockGroup(true);
+            boardGroup.add(ghostBlock);
+
+            // UIの初期化
+            initUI();
+            updateGhost();
+            updateTopViewUI();
+
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        function createBlockGroup(isGhost = false) {
+            const group = new THREE.Group();
+            const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+            const sphereGeo = new THREE.SphereGeometry(0.4, 32, 32);
+            const edgesGeo = new THREE.EdgesGeometry(boxGeo);
+
+            // セル1 (基点)
+            const mesh1 = new THREE.Mesh(boxGeo, isGhost ? matGhostValid : matEmpty);
+            mesh1.position.set(0.5, 0.5, 0.5); // マスの中心へ
+            group.add(mesh1);
+            if (!isGhost) {
+                const edges1 = new THREE.LineSegments(edgesGeo, lineMat);
+                mesh1.add(edges1);
+            }
+
+            // セル2
+            const mesh2 = new THREE.Mesh(boxGeo, isGhost ? matGhostValid : matEmpty);
+            mesh2.position.set(1.5, 0.5, 0.5); // X軸方向に並べる初期状態
+            group.add(mesh2);
+            if (!isGhost) {
+                const edges2 = new THREE.LineSegments(edgesGeo, lineMat);
+                mesh2.add(edges2);
+            }
+
+            // 球体
+            const sphere = new THREE.Mesh(sphereGeo, matWhite); // 色は後で設定
+            group.add(sphere);
+
+            // 参照を保存しておく
+            group.userData = { mesh1, mesh2, sphere };
+            return group;
+        }
+
+        function updateGhost() {
+            if (isGameOver) {
+                ghostBlock.visible = false;
+                return;
+            }
+            ghostBlock.visible = true;
+
+            // Z高さの計算
+            let z = gameBoard.getPlacementZ(cursorX, cursorY, currentDir);
+            let isValid = (z !== -1);
+
+            // UIボタンの有効化/無効化
+            document.getElementById('btn-place').disabled = !isValid;
+
+            // マテリアルの色変更
+            let mat = isValid ? matGhostValid : matGhostInvalid;
+            ghostBlock.userData.mesh1.material = mat;
+            ghostBlock.userData.mesh2.material = mat;
+
+            // 位置と向きの反映
+            ghostBlock.position.set(cursorX, z === -1 ? gameBoard.getTopZ(cursorX, cursorY)+1 : z, cursorY);
+            
+            if (currentDir === 0) { // X軸
+                ghostBlock.userData.mesh2.position.set(1.5, 0.5, 0.5);
+            } else { // Y軸 (Three.jsではZ軸方向が画面奥/手前)
+                ghostBlock.userData.mesh2.position.set(0.5, 0.5, 1.5);
+            }
+
+            // 球の位置と色の反映
+            let sx = currentSpherePos === 0 ? 0.5 : (currentDir === 0 ? 1.5 : 0.5);
+            let sz = currentSpherePos === 0 ? 0.5 : (currentDir === 1 ? 1.5 : 0.5);
+            ghostBlock.userData.sphere.position.set(sx, 0.5, sz);
+            
+            // プレビューの球は半透明に
+            let ghostSphereColor = currentTurn === 'white' ? 0xffffff : 0x222222;
+            ghostBlock.userData.sphere.material = new THREE.MeshBasicMaterial({
+                color: ghostSphereColor, 
+                transparent: true, 
+                opacity: 0.6
+            });
+        }
+
+        function placeBlockAction() {
+            if (isGameOver) return;
+            let z = gameBoard.getPlacementZ(cursorX, cursorY, currentDir);
+            if (z === -1) return;
+
+            // ロジックに配置を記録
+            gameBoard.placeBlock(cursorX, cursorY, z, currentDir, currentTurn, currentSpherePos);
+
+            // 描画用ブロックの生成
+            const block = createBlockGroup(false);
+            block.position.set(cursorX, z, cursorY);
+            if (currentDir === 0) {
+                block.userData.mesh2.position.set(1.5, 0.5, 0.5);
+            } else {
+                block.userData.mesh2.position.set(0.5, 0.5, 1.5);
+            }
+            let sx = currentSpherePos === 0 ? 0.5 : (currentDir === 0 ? 1.5 : 0.5);
+            let sz = currentSpherePos === 0 ? 0.5 : (currentDir === 1 ? 1.5 : 0.5);
+            block.userData.sphere.position.set(sx, 0.5, sz);
+            block.userData.sphere.material = currentTurn === 'white' ? matWhite : matBlack;
+
+            boardGroup.add(block);
+            placedMeshes.push(block);
+
+            // 上空ビューの更新
+            updateTopViewUI();
+
+            // 勝敗判定
+            let winner = gameBoard.checkWin();
+            if (winner) {
+                showWinMessage(winner);
+                isGameOver = true;
+                updateGhost();
+                return;
+            }
+
+            // ターン交代
+            currentTurn = currentTurn === 'white' ? 'black' : 'white';
+            
+            // UI更新
+            let indicator = document.getElementById('turn-indicator');
+            let turnText = document.getElementById('turn-text');
+            if(currentTurn === 'white'){
+                indicator.style.backgroundColor = 'white';
+                indicator.style.borderColor = '#888';
+                turnText.innerText = '白のターン';
+            } else {
+                indicator.style.backgroundColor = 'black';
+                indicator.style.borderColor = 'white';
+                turnText.innerText = '黒のターン';
+            }
+
+            updateGhost();
+        }
+
+        function initUI() {
+            // 移動
+            const move = (dx, dy) => {
+                cursorX += dx;
+                cursorY += dy;
+                // 制限
+                if(cursorX < 0) cursorX = 0;
+                if(cursorY < 0) cursorY = 0;
+                
+                let maxX = currentDir === 0 ? SIZE - 2 : SIZE - 1;
+                let maxY = currentDir === 1 ? SIZE - 2 : SIZE - 1;
+                
+                if(cursorX > maxX) cursorX = maxX;
+                if(cursorY > maxY) cursorY = maxY;
+                
+                updateGhost();
+            };
+
+            document.getElementById('btn-x-minus').addEventListener('click', () => move(-1, 0));
+            document.getElementById('btn-x-plus').addEventListener('click', () => move(1, 0));
+            document.getElementById('btn-y-minus').addEventListener('click', () => move(0, -1)); // 画面上は奥(Y-)
+            document.getElementById('btn-y-plus').addEventListener('click', () => move(0, 1));   // 画面下は手前(Y+)
+
+            // 回転
+            document.getElementById('btn-rotate').addEventListener('click', () => {
+                currentDir = currentDir === 0 ? 1 : 0;
+                // 回転により場外に出る場合の補正
+                if (currentDir === 0 && cursorX === SIZE - 1) cursorX = SIZE - 2;
+                if (currentDir === 1 && cursorY === SIZE - 1) cursorY = SIZE - 2;
+                updateGhost();
+            });
+
+            // 反転
+            document.getElementById('btn-flip').addEventListener('click', () => {
+                currentSpherePos = currentSpherePos === 0 ? 1 : 0;
+                updateGhost();
+            });
+
+            // 配置
+            document.getElementById('btn-place').addEventListener('click', placeBlockAction);
+
+            // キーボード操作対応
+            window.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowUp' || e.key === 'w') move(0, -1);
+                if (e.key === 'ArrowDown' || e.key === 's') move(0, 1);
+                if (e.key === 'ArrowLeft' || e.key === 'a') move(-1, 0);
+                if (e.key === 'ArrowRight' || e.key === 'd') move(1, 0);
+                if (e.key === 'r') document.getElementById('btn-rotate').click();
+                if (e.key === 'f') document.getElementById('btn-flip').click();
+                if (e.key === 'Enter' || e.key === ' ') document.getElementById('btn-place').click();
+            });
+        }
+
+        function updateTopViewUI() {
+            const gridEl = document.getElementById('top-grid');
+            gridEl.innerHTML = ''; // クリア
+            const view = gameBoard.getTopView();
+            
+            for (let y = 0; y < SIZE; y++) {
+                for (let x = 0; x < SIZE; x++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'top-cell';
+                    if (view[x][y]) {
+                        const dot = document.createElement('div');
+                        dot.className = 'top-dot';
+                        dot.style.backgroundColor = view[x][y] === 'white' ? 'white' : 'black';
+                        if(view[x][y] === 'black') dot.style.border = '1px solid #555';
+                        cell.appendChild(dot);
+                    }
+                    gridEl.appendChild(cell);
+                }
+            }
+        }
+
+        function showWinMessage(winner) {
+            const overlay = document.getElementById('message-overlay');
+            const text = document.getElementById('message-text');
+            text.innerText = winner === 'white' ? '白の勝利！' : '黒の勝利！';
+            overlay.style.display = 'block';
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
